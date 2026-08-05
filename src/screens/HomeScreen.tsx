@@ -8,6 +8,7 @@ import {
   Animated,
   Easing,
   Alert,
+  Vibration,
 } from 'react-native';
 import { colors, spacing } from '../theme/theme';
 import Svg, { Path, Rect } from 'react-native-svg';
@@ -70,6 +71,7 @@ export default function HomeScreen() {
   const handlePress = async () => {
     if (action !== 'idle' || online !== true) return;
 
+    Vibration.vibrate(40); // short tap feedback when the command is sent
     const goingTo: DoorState = doorState === 'closed' ? 'open' : 'closed';
     setAction('sending');
     startSpin();
@@ -90,6 +92,7 @@ export default function HomeScreen() {
         stopSpin();
         setDoorState(goingTo);
         setAction('idle');
+        Vibration.vibrate(15); // subtle confirmation buzz on completion
         setTimeout(poll, 500); // refresh real online status shortly after
       }, wait);
     }
