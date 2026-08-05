@@ -5,10 +5,12 @@ import {
   Text,
   Pressable,
   StyleSheet,
-  ActivityIndicator,
+  Animated,
+  Easing,
   Alert,
 } from 'react-native';
 import { colors, spacing } from '../theme/theme';
+import Svg, { Path, Rect } from 'react-native-svg';
 import {
   getGarageOnline,
   triggerOpenGarage,
@@ -16,11 +18,18 @@ import {
 } from '../services/firebase';
 
 const POLL_INTERVAL_MS = 3000;
+const MIN_SPIN_MS = 1400; // keeps the spin visible even on a fast network reply
+
+type DoorState = 'closed' | 'open'; // assumed, not sensor-verified -- see notes below
+type ActionState = 'idle' | 'sending';
 
 export default function HomeScreen() {
   const [online, setOnline] = useState<boolean | null>(null); // null = unknown yet
-  const [sending, setSending] = useState<'open' | 'close' | null>(null);
+  const [doorState, setDoorState] = useState<DoorState>('closed'); // best-guess only
+  const [action, setAction] = useState<ActionState>('idle');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const spinValue = useRef(new Animated.Value(0)).current;
+  const spinLoopRef = useRef<Animated.CompositeAnimation | null>(null);
 
   const poll = useCallback(async () => {
     try {
@@ -40,11 +49,34 @@ export default function HomeScreen() {
     };
   }, [poll]);
 
-  const handlePress = async (action: 'open' | 'close') => {
-    if (sending) return;
-    setSending(action);
+  const startSpin = () => {
+    spinValue.setValue(0);
+    spinLoopRef.current = Animated.loop(
+      Animated.timing(spinValue, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+    spinLoopRef.current.start();
+  };
+
+  const stopSpin = () => {
+    spinLoopRef.current?.stop();
+    spinValue.setValue(0);
+  };
+
+  const handlePress = async () => {
+    if (action !== 'idle' || online !== true) return;
+
+    const goingTo: DoorState = doorState === 'closed' ? 'open' : 'closed';
+    setAction('sending');
+    startSpin();
+
+    const started = Date.now();
     try {
-      if (action === 'open') {
+      if (goingTo === 'open') {
         await triggerOpenGarage();
       } else {
         await triggerCloseGarage();
@@ -52,18 +84,39 @@ export default function HomeScreen() {
     } catch (err: any) {
       Alert.alert('Command failed', err?.message ?? 'Unknown error');
     } finally {
-      setSending(null);
-      // Give the board a moment to act, then refresh status
-      setTimeout(poll, 1500);
+      const elapsed = Date.now() - started;
+      const wait = Math.max(0, MIN_SPIN_MS - elapsed);
+      setTimeout(() => {
+        stopSpin();
+        setDoorState(goingTo);
+        setAction('idle');
+        setTimeout(poll, 500); // refresh real online status shortly after
+      }, wait);
     }
   };
+
+  const spin = spinValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  const disabled = online !== true || action !== 'idle';
 
   const statusColor =
     online === null ? colors.textDim2 : online ? colors.green : colors.red;
   const statusLabel =
-    online === null ? 'CHECKING...' : online ? 'ONLINE' : 'OFFLINE';
+    online === null ? 'CONNECTING' : online ? 'ONLINE' : 'OFFLINE';
 
-  const buttonsDisabled = online !== true || sending !== null;
+  const centerLabel =
+    action === 'sending'
+      ? doorState === 'closed'
+        ? 'Opening'
+        : 'Closing'
+      : doorState === 'closed'
+        ? 'CLOSED'
+        : 'OPEN';
+
+  const ringColor = doorState === 'closed' ? colors.textDim2 : colors.cyan;
 
   return (
     <View style={styles.container}>
@@ -80,59 +133,68 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      <View style={styles.buttonArea}>
-        <Pressable
-          onPress={() => handlePress('open')}
-          disabled={buttonsDisabled}
-          style={({ pressed }) => [
-            styles.actionButton,
-            { borderColor: colors.cyan },
-            buttonsDisabled && styles.actionButtonDisabled,
-            pressed && !buttonsDisabled && styles.actionButtonPressed,
-          ]}
-        >
-          {sending === 'open' ? (
-            <ActivityIndicator color={colors.cyan} />
-          ) : (
-            <Text style={[styles.actionButtonText, { color: colors.cyan }]}>
-              OPEN GARAGE
-            </Text>
+      <View style={styles.centerArea}>
+        <View style={styles.dialWrap}>
+          {action === 'sending' && (
+            <Animated.View
+              style={[
+                styles.spinRing,
+                { transform: [{ rotate: spin }] },
+              ]}
+            />
           )}
-        </Pressable>
+          <Pressable
+            onPress={handlePress}
+            disabled={disabled}
+            style={({ pressed }) => [
+              styles.dialButton,
+              { backgroundColor: ringColor },
+              disabled && action === 'idle' && styles.dialDisabled,
+              pressed && !disabled && { opacity: 0.85 },
+            ]}
+          >
+            <Svg width={64} height={56} viewBox="0 0 64 56">
+              <Path d="M2 20 L32 2 L62 20 Z" fill="#000000" />
+              <Rect x="6" y="18" width="52" height="34" rx="4" fill="#000000" />
+              <Rect x="14" y="26" width="36" height="3" rx="1.5" fill="rgba(255,255,255,0.35)" />
+              <Rect x="14" y="34" width="36" height="3" rx="1.5" fill="rgba(255,255,255,0.35)" />
+              <Rect x="14" y="42" width="36" height="3" rx="1.5" fill="rgba(255,255,255,0.35)" />
+            </Svg>
+          </Pressable>
+        </View>
 
-        <Pressable
-          onPress={() => handlePress('close')}
-          disabled={buttonsDisabled}
-          style={({ pressed }) => [
-            styles.actionButton,
-            { borderColor: colors.amber },
-            buttonsDisabled && styles.actionButtonDisabled,
-            pressed && !buttonsDisabled && styles.actionButtonPressed,
+        <Text style={styles.subLabel}>Garage Door</Text>
+        <Text
+          style={[
+            styles.centerLabel,
+            { color: action === 'sending' ? colors.textDim2 : colors.text },
           ]}
         >
-          {sending === 'close' ? (
-            <ActivityIndicator color={colors.amber} />
-          ) : (
-            <Text style={[styles.actionButtonText, { color: colors.amber }]}>
-              CLOSE GARAGE
-            </Text>
-          )}
-        </Pressable>
+          {centerLabel}
+        </Text>
+        {doorState !== null && action === 'idle' && (
+          <Text style={styles.assumedNote}>
+            (estimated \u2014 no door sensor installed)
+          </Text>
+        )}
       </View>
 
       <Text style={styles.footerNote}>
         {online === false
           ? 'Garage unit unreachable \u2014 controls disabled'
-          : 'Auto-refreshing every 3s'}
+          : 'Tap to toggle'}
       </Text>
     </View>
   );
 }
 
+const DIAL_SIZE = 180;
+const RING_SIZE = DIAL_SIZE + 24;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: '#000000',
     paddingHorizontal: spacing.md,
     paddingTop: spacing.xl,
   },
@@ -143,7 +205,6 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: colors.line,
-    marginBottom: spacing.lg,
   },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   brandDot: {
@@ -169,23 +230,61 @@ const styles = StyleSheet.create({
   },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
   statusText: { fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  buttonArea: { gap: spacing.md, marginTop: spacing.lg },
-  actionButton: {
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingVertical: 28,
+  centerArea: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.panel,
   },
-  actionButtonPressed: { opacity: 0.7 },
-  actionButtonDisabled: { opacity: 0.3, borderColor: colors.textDim2 },
-  actionButtonText: { fontSize: 16, fontWeight: '700', letterSpacing: 3 },
+  dialWrap: {
+    width: RING_SIZE,
+    height: RING_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
+  },
+  spinRing: {
+    position: 'absolute',
+    width: RING_SIZE,
+    height: RING_SIZE,
+    borderRadius: RING_SIZE / 2,
+    borderWidth: 4,
+    borderColor: 'transparent',
+    borderTopColor: colors.cyan,
+    borderRightColor: colors.cyan,
+  },
+  dialButton: {
+    width: DIAL_SIZE,
+    height: DIAL_SIZE,
+    borderRadius: DIAL_SIZE / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dialDisabled: {
+    opacity: 0.4,
+  },
+  subLabel: {
+    color: colors.textDim2,
+    fontSize: 12,
+    letterSpacing: 2,
+    marginBottom: 4,
+  },
+  centerLabel: {
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: 2,
+  },
+  assumedNote: {
+    color: colors.textDim2,
+    fontSize: 10,
+    marginTop: 8,
+    fontStyle: 'italic',
+  },
   footerNote: {
-    marginTop: spacing.lg,
+    marginBottom: spacing.lg,
     textAlign: 'center',
     color: colors.textDim2,
     fontSize: 11,
     letterSpacing: 1,
   },
 });
+
