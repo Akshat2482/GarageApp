@@ -29,14 +29,14 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      - name: Build debug APK
+      - name: Build release APK
         working-directory: android
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleRelease
         env:
           ORG_GRADLE_PROJECT_newArchEnabled: 'false'
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: garage-app-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: garage-app-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
