@@ -21,6 +21,17 @@ import {
 const POLL_INTERVAL_MS = 3000;
 const MIN_SPIN_MS = 1400; // keeps the spin visible even on a fast network reply
 
+// Wraps Vibration.vibrate() so a device-specific failure (some Samsung/
+// OneUI builds have been flaky with certain native APIs) never crashes
+// the app -- worst case, you just don't feel a buzz.
+function safeVibrate(ms: number) {
+  try {
+    Vibration.vibrate(ms);
+  } catch (err) {
+    console.warn('Vibration failed (non-fatal):', err);
+  }
+}
+
 type DoorState = 'closed' | 'open'; // assumed, not sensor-verified -- see notes below
 type ActionState = 'idle' | 'sending';
 
@@ -71,7 +82,7 @@ export default function HomeScreen() {
   const handlePress = async () => {
     if (action !== 'idle' || online !== true) return;
 
-    Vibration.vibrate(40); // short tap feedback when the command is sent
+    safeVibrate(40); // short tap feedback when the command is sent
     const goingTo: DoorState = doorState === 'closed' ? 'open' : 'closed';
     setAction('sending');
     startSpin();
@@ -92,7 +103,7 @@ export default function HomeScreen() {
         stopSpin();
         setDoorState(goingTo);
         setAction('idle');
-        Vibration.vibrate(15); // subtle confirmation buzz on completion
+        safeVibrate(15); // subtle confirmation buzz on completion
         setTimeout(poll, 500); // refresh real online status shortly after
       }, wait);
     }
