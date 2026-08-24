@@ -34,7 +34,7 @@ public class GarageCarScreen extends Screen {
     // Native app -- this native screen runs outside the JS bridge, so
     // it can't read that file directly.
     private static final String DATABASE_URL = "https://garagecontroller-593f2-default-rtdb.firebaseio.com";
-    private static final String DATABASE_SECRET = "PASTE_YOUR_DATABASE_SECRET_HERE";
+    private static final String DATABASE_SECRET = "N4nIXKzkrCW4QuwWXu6BnKcxOHJlqiTvIVCocdr4";
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
